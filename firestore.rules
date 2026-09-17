@@ -1,0 +1,64 @@
+rules_version = '2';
+
+// Trust model: this is designed for a private game among friends who each
+// know their own game code, not a public multi-tenant app. It stops casual
+// snooping (a Faithful cannot read anyone else's secret role) but it does
+// NOT stop a technically determined player from reading the deployed
+// source and hand-crafting writes to cheat. See README "Security model"
+// section for what a hardened version would add (Cloud Functions).
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isTraitor(gameId) {
+      return get(/databases/$(database)/documents/games/$(gameId)/playerRoles/$(request.auth.uid)).data.role == 'traitor';
+    }
+
+    match /games/{gameId} {
+      allow read: if signedIn();
+      allow create: if signedIn();
+      // Any signed-in player can advance shared game state (phase timers,
+      // round counters, pending recruitment, elimination counts). This is
+      // the main trust-based relaxation described above.
+      allow update: if signedIn();
+
+      match /players/{uid} {
+        // Public roster fields only: name, alive, eliminatedInfo.
+        allow read: if signedIn();
+        allow create: if signedIn() && request.auth.uid == uid;
+        allow update: if signedIn();
+      }
+
+      match /playerRoles/{uid} {
+        // A player can always read their own role. A traitor can read any
+        // role (needed for the traitor roster / chat access check). A
+        // Faithful can never read another player's role.
+        allow read: if signedIn() && (request.auth.uid == uid || isTraitor(gameId));
+        // Written once per player at game start (by whoever clicked
+        // "Start"), and thereafter only by the player themself (self-reveal
+        // on elimination, self-promotion on accepting recruitment).
+        allow create: if signedIn();
+        allow update: if signedIn() && request.auth.uid == uid;
+      }
+
+      match /nightAction/{doc} {
+        // Holds only the traitors' current proposed victim, never anyone's
+        // role, so it's fine for any game member to read/write.
+        allow read, write: if signedIn();
+      }
+
+      match /traitorChat/{messageId} {
+        allow read, create: if signedIn() && isTraitor(gameId);
+      }
+
+      match /eliminatedLog/{entryId} {
+        allow read: if signedIn();
+        allow create: if signedIn();
+      }
+    }
+  }
+}

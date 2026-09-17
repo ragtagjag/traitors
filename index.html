@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>The Traitors</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🗝️</text></svg>" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Work+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ============ JOIN / LANDING ============ -->
+  <section id="view-join" class="view view-center">
+    <div class="brand">
+      <span class="sigil">🗝️</span>
+      <h1>The Traitors</h1>
+      <p class="tagline">A game of trust, murder and betrayal.</p>
+    </div>
+
+    <div class="stack" style="margin-top: 28px;">
+      <div class="toggle-row" id="join-mode-toggle">
+        <button type="button" data-mode="create" class="active">Host a game</button>
+        <button type="button" data-mode="join">Join a game</button>
+      </div>
+
+      <div class="field" style="margin-top: 10px;">
+        <label for="input-name">Your name</label>
+        <input type="text" id="input-name" placeholder="e.g. Alex" maxlength="24" autocomplete="off" />
+      </div>
+
+      <div class="field" id="field-game-code">
+        <label for="input-code">Game code</label>
+        <input type="text" id="input-code" placeholder="e.g. RAVEN" maxlength="6" autocomplete="off" style="text-transform:uppercase;" />
+      </div>
+
+      <p class="error-text" id="join-error"></p>
+
+      <button class="btn btn-primary" id="btn-join-submit">Enter the castle</button>
+    </div>
+  </section>
+
+  <!-- ============ LOBBY (host: settings + player list) ============ -->
+  <section id="view-lobby" class="view hidden">
+    <div class="card" style="text-align:center; margin-bottom: 20px;">
+      <p class="game-code-label">Game code — share with your friends</p>
+      <div class="game-code" id="lobby-code">----</div>
+    </div>
+
+    <h3>Players joined (<span id="lobby-player-count">0</span>)</h3>
+    <ul class="list" id="lobby-player-list"></ul>
+
+    <div id="lobby-host-settings" class="hidden">
+      <div class="section-label">Game settings</div>
+      <div class="field-row">
+        <div class="field">
+          <label for="set-numTraitors">Starting traitors</label>
+          <input type="number" id="set-numTraitors" min="1" value="2" />
+        </div>
+        <div class="field">
+          <label for="set-maxTraitors">Max traitors</label>
+          <input type="number" id="set-maxTraitors" min="1" value="3" />
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="set-investigationMins">Investigation (min)</label>
+          <input type="number" id="set-investigationMins" min="1" value="30" />
+        </div>
+        <div class="field">
+          <label for="set-banishmentMins">Banishment (min)</label>
+          <input type="number" id="set-banishmentMins" min="1" value="10" />
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="set-nightMins">Night phase (min)</label>
+          <input type="number" id="set-nightMins" min="1" value="10" />
+        </div>
+        <div class="field">
+          <label for="set-endgameThreshold">Endgame at</label>
+          <input type="number" id="set-endgameThreshold" min="2" value="4" />
+        </div>
+      </div>
+      <div class="field">
+        <label>If the lone traitor's recruit doesn't respond in time</label>
+        <div class="toggle-row" id="toggle-noresponse">
+          <button type="button" data-val="decline" class="active">They're murdered</button>
+          <button type="button" data-val="accept">They join</button>
+        </div>
+      </div>
+
+      <p class="error-text" id="lobby-error"></p>
+      <button class="btn btn-primary" id="btn-start-game">Begin the game</button>
+    </div>
+
+    <p class="notice" id="lobby-waiting-notice">Waiting for the host to begin the game&hellip;</p>
+  </section>
+
+  <!-- ============ HOME (persistent phase screen) ============ -->
+  <section id="view-home" class="view hidden">
+    <div class="phase-header">
+      <div class="phase-name" id="home-phase-name">INVESTIGATION</div>
+      <div class="phase-timer" id="home-timer">30:00</div>
+      <div class="phase-round" id="home-round">Round 1</div>
+    </div>
+
+    <div class="phase-body" id="phase-body-investigation">
+      <div class="icon">🕯️</div>
+      <h2>Talk. Watch. Wonder.</h2>
+      <p>Mingle and gather what clues you can. Nobody is called anywhere &mdash; just watch who avoids what.</p>
+    </div>
+
+    <div class="phase-body hidden" id="phase-body-banishment">
+      <div class="icon">🕰️</div>
+      <h2>Round the table</h2>
+      <p>Discuss and vote in person. Once the table has decided, any player can record the result below.</p>
+      <button class="btn btn-danger" id="btn-open-banishment">Record the banishment</button>
+    </div>
+
+    <div class="phase-body hidden" id="phase-body-night-faithful">
+      <div class="icon">🌙</div>
+      <h2>Thinking time</h2>
+      <p>You're safe for now. Use this time alone to think about what you've seen.</p>
+    </div>
+
+    <div class="phase-body hidden" id="phase-body-night-traitor">
+      <div class="icon">🗡️</div>
+      <h2 id="night-traitor-heading">Choose who to murder</h2>
+      <p id="night-traitor-sub">Agree with your fellow traitors, then tap a name below. You can change your mind until the phase ends.</p>
+      <div id="night-victim-list" style="text-align:left;"></div>
+      <div class="divider"></div>
+      <div class="chat-log" id="chat-log" style="max-height: 180px;"></div>
+      <form class="chat-input-row" id="chat-form">
+        <input type="text" id="chat-input" placeholder="Message your fellow traitors&hellip;" maxlength="300" autocomplete="off" />
+        <button type="submit">Send</button>
+      </form>
+    </div>
+
+    <div class="phase-body hidden" id="phase-body-endgame">
+      <div class="icon">⚖️</div>
+      <h2>The endgame</h2>
+      <p>You've reached the final table. Finish this one in person &mdash; the app steps back from here.</p>
+    </div>
+
+    <div class="bottom-nav">
+      <button class="btn btn-ghost" id="btn-show-active">Active players</button>
+      <button class="btn btn-ghost" id="btn-show-eliminated">Eliminated</button>
+    </div>
+  </section>
+
+</div>
+
+<!-- ============ Overlay: banishment picker ============ -->
+<div class="overlay hidden" id="overlay-banishment">
+  <div class="sheet">
+    <div class="sheet-header">
+      <h2>Who was banished?</h2>
+      <button class="close-x" id="close-banishment">&times;</button>
+    </div>
+    <p>Select who the table voted to banish. This is recorded for everyone straight away.</p>
+    <div id="banishment-list"></div>
+  </div>
+</div>
+
+<!-- ============ Overlay: active players ============ -->
+<div class="overlay hidden" id="overlay-active">
+  <div class="sheet">
+    <div class="sheet-header">
+      <h2>Active players</h2>
+      <button class="close-x" id="close-active">&times;</button>
+    </div>
+    <ul class="list" id="active-list"></ul>
+  </div>
+</div>
+
+<!-- ============ Overlay: eliminated players ============ -->
+<div class="overlay hidden" id="overlay-eliminated">
+  <div class="sheet">
+    <div class="sheet-header">
+      <h2>Eliminated</h2>
+      <button class="close-x" id="close-eliminated">&times;</button>
+    </div>
+    <ul class="list" id="eliminated-list"></ul>
+    <p class="notice" id="eliminated-empty">Nobody yet.</p>
+  </div>
+</div>
+
+<!-- ============ Full-screen: private night reveal ============ -->
+<div class="full-reveal hidden" id="reveal-safe">
+  <div class="icon">🕊️</div>
+  <h1>Return to the game</h1>
+  <p>You made it through the night.</p>
+  <button class="btn btn-primary" id="btn-ack-safe" style="max-width:240px;">Continue</button>
+</div>
+
+<div class="full-reveal hidden" id="reveal-murdered">
+  <div class="icon">🩸</div>
+  <h1>You've been murdered by the Traitors</h1>
+  <p>Your part in the game is over. Let the group know you're out.</p>
+</div>
+
+<!-- ============ Full-screen: recruitment offer ============ -->
+<div class="full-reveal hidden overlay-center" id="reveal-recruit">
+  <div class="icon">🕯️</div>
+  <h1>You've been approached by the Traitors</h1>
+  <p>Only one Traitor remains, and they need a new partner tonight. Join them, or refuse and take your chances.</p>
+  <p class="phase-timer" id="recruit-timer" style="font-size:34px;">00:30</p>
+  <div class="btn-row" style="max-width:320px; width:100%;">
+    <button class="btn btn-ghost" id="btn-recruit-decline">Refuse</button>
+    <button class="btn btn-danger" id="btn-recruit-accept">Join them</button>
+  </div>
+</div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
