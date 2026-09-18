@@ -14,8 +14,17 @@
 
 <div id="app">
 
+  <!-- ============ LOADING (shown briefly while checking for a game to rejoin) ============ -->
+  <section id="view-loading" class="view view-center">
+    <div class="brand">
+      <span class="sigil">🗝️</span>
+      <h1>The Traitors</h1>
+      <p class="tagline">Reconnecting&hellip;</p>
+    </div>
+  </section>
+
   <!-- ============ JOIN / LANDING ============ -->
-  <section id="view-join" class="view view-center">
+  <section id="view-join" class="view view-center hidden">
     <div class="brand">
       <span class="sigil">🗝️</span>
       <h1>The Traitors</h1>
@@ -112,7 +121,7 @@
   </section>
 
   <!-- ============ HOME (persistent phase screen) ============ -->
-  <section id="view-home" class="view hidden">
+  <section id="view-home" class="view view-center hidden">
     <div class="phase-header">
       <div class="phase-name" id="home-phase-name">INVESTIGATION</div>
       <div class="phase-timer" id="home-timer">30:00</div>
@@ -156,6 +165,7 @@
       <div class="icon">⚖️</div>
       <h2>The endgame</h2>
       <p>You've reached the final table. Finish this one in person &mdash; the app steps back from here.</p>
+      <button class="btn btn-ghost" id="btn-new-game">Start a new game</button>
     </div>
 
     <div class="bottom-nav">

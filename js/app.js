@@ -5,7 +5,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
 import {
   getFirestore, doc, getDoc, getDocs, setDoc, updateDoc, onSnapshot,
-  collection, addDoc, query, orderBy, serverTimestamp,
+  collection, addDoc, query, where, orderBy, serverTimestamp,
   runTransaction, Timestamp, deleteField
 } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js";
 
@@ -610,10 +610,16 @@ async function finalizeMyElimination(method) {
   const roleSnap = await getDoc(roleRef(gameCode, myUid));
   const role = roleSnap.exists() ? roleSnap.data().role : "faithful";
 
-  await addDoc(eliminatedCol(gameCode), {
-    uid: myUid, name: myPlayerData.name, role, method,
-    round: myPlayerData.eliminatedInfo.round, createdAt: serverTimestamp()
-  });
+  // Guard against a duplicate log entry if this device retries after a
+  // refresh that happened mid-way through finalizing (e.g. the log entry
+  // was written but the tab closed before pending was cleared).
+  const existing = await getDocs(query(eliminatedCol(gameCode), where("uid", "==", myUid)));
+  if (existing.empty) {
+    await addDoc(eliminatedCol(gameCode), {
+      uid: myUid, name: myPlayerData.name, role, method,
+      round: myPlayerData.eliminatedInfo.round, createdAt: serverTimestamp()
+    });
+  }
 
   await updateDoc(playerRef(gameCode, myUid), {
     eliminatedInfo: { method, round: myPlayerData.eliminatedInfo.round, pending: false }
@@ -740,6 +746,13 @@ $("close-eliminated").addEventListener("click", () => closeOverlay("overlay-elim
 
 $("btn-ack-safe").addEventListener("click", () => $("reveal-safe").classList.add("hidden"));
 
+$("btn-new-game").addEventListener("click", () => {
+  // Full reload is the simplest reliable way to clear all in-memory state
+  // and every one-time-reveal flag, not just the stored game code.
+  localStorage.removeItem("traitors_last_code");
+  location.reload();
+});
+
 // ---------------------------------------------------------------
 // Initial role reveal — the moment a player first learns their role,
 // right as round 1 begins. Traitors also get told who their fellow
@@ -799,10 +812,29 @@ render = function () {
 };
 
 // ---------------------------------------------------------------
-// Boot
+// Boot — silently rejoin an in-progress game if this device already has
+// a seat in one (same browser = same anonymous auth uid, persisted by
+// Firebase across reloads). Falls back to the join screen otherwise.
 // ---------------------------------------------------------------
 (async function boot() {
   await ensureSignedIn();
   const last = localStorage.getItem("traitors_last_code");
-  if (last) $("input-code").value = last;
+
+  if (last) {
+    $("input-code").value = last;
+    try {
+      const gameSnap = await getDoc(gameRef(last));
+      if (gameSnap.exists()) {
+        const playerSnap = await getDoc(playerRef(last, myUid));
+        if (playerSnap.exists()) {
+          enterGame(last, gameSnap.data().hostUid === myUid);
+          return; // view-loading stays up until the first snapshot renders
+        }
+      }
+    } catch (err) {
+      console.error("Rejoin check failed", err);
+    }
+  }
+
+  showView("view-join");
 })();
