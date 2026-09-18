@@ -44,7 +44,56 @@
     </div>
   </section>
 
-  <!-- ============ LOBBY (host: settings + player list) ============ -->
+  <!-- ============ HOST SETUP (settings, before a code exists) ============ -->
+  <section id="view-host-setup" class="view hidden">
+    <div class="brand" style="margin-bottom: 10px;">
+      <h1 style="font-size:24px;">Set up the game</h1>
+      <p class="tagline">You'll get a join code to share on the next screen.</p>
+    </div>
+
+    <div class="field-row">
+      <div class="field">
+        <label for="set-numTraitors">Starting traitors</label>
+        <input type="number" id="set-numTraitors" min="1" value="2" />
+      </div>
+      <div class="field">
+        <label for="set-maxTraitors">Max traitors</label>
+        <input type="number" id="set-maxTraitors" min="1" value="3" />
+      </div>
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label for="set-investigationMins">Investigation (min)</label>
+        <input type="number" id="set-investigationMins" min="1" value="30" />
+      </div>
+      <div class="field">
+        <label for="set-banishmentMins">Banishment (min)</label>
+        <input type="number" id="set-banishmentMins" min="1" value="10" />
+      </div>
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label for="set-nightMins">Night phase (min)</label>
+        <input type="number" id="set-nightMins" min="1" value="10" />
+      </div>
+      <div class="field">
+        <label for="set-endgameThreshold">Endgame at</label>
+        <input type="number" id="set-endgameThreshold" min="2" value="4" />
+      </div>
+    </div>
+    <div class="field">
+      <label>If the lone traitor's recruit doesn't respond in time</label>
+      <div class="toggle-row" id="toggle-noresponse">
+        <button type="button" data-val="decline" class="active">They're murdered</button>
+        <button type="button" data-val="accept">They join</button>
+      </div>
+    </div>
+
+    <p class="error-text" id="setup-error"></p>
+    <button class="btn btn-primary" id="btn-create-game">Create the game</button>
+  </section>
+
+  <!-- ============ WAITING ROOM (join code + player list) ============ -->
   <section id="view-lobby" class="view hidden">
     <div class="card" style="text-align:center; margin-bottom: 20px;">
       <p class="game-code-label">Game code — share with your friends</p>
@@ -54,46 +103,7 @@
     <h3>Players joined (<span id="lobby-player-count">0</span>)</h3>
     <ul class="list" id="lobby-player-list"></ul>
 
-    <div id="lobby-host-settings" class="hidden">
-      <div class="section-label">Game settings</div>
-      <div class="field-row">
-        <div class="field">
-          <label for="set-numTraitors">Starting traitors</label>
-          <input type="number" id="set-numTraitors" min="1" value="2" />
-        </div>
-        <div class="field">
-          <label for="set-maxTraitors">Max traitors</label>
-          <input type="number" id="set-maxTraitors" min="1" value="3" />
-        </div>
-      </div>
-      <div class="field-row">
-        <div class="field">
-          <label for="set-investigationMins">Investigation (min)</label>
-          <input type="number" id="set-investigationMins" min="1" value="30" />
-        </div>
-        <div class="field">
-          <label for="set-banishmentMins">Banishment (min)</label>
-          <input type="number" id="set-banishmentMins" min="1" value="10" />
-        </div>
-      </div>
-      <div class="field-row">
-        <div class="field">
-          <label for="set-nightMins">Night phase (min)</label>
-          <input type="number" id="set-nightMins" min="1" value="10" />
-        </div>
-        <div class="field">
-          <label for="set-endgameThreshold">Endgame at</label>
-          <input type="number" id="set-endgameThreshold" min="2" value="4" />
-        </div>
-      </div>
-      <div class="field">
-        <label>If the lone traitor's recruit doesn't respond in time</label>
-        <div class="toggle-row" id="toggle-noresponse">
-          <button type="button" data-val="decline" class="active">They're murdered</button>
-          <button type="button" data-val="accept">They join</button>
-        </div>
-      </div>
-
+    <div id="lobby-host-start" class="hidden mt-auto stack">
       <p class="error-text" id="lobby-error"></p>
       <button class="btn btn-primary" id="btn-start-game">Begin the game</button>
     </div>
@@ -132,6 +142,7 @@
       <div class="icon">🗡️</div>
       <h2 id="night-traitor-heading">Choose who to murder</h2>
       <p id="night-traitor-sub">Agree with your fellow traitors, then tap a name below. You can change your mind until the phase ends.</p>
+      <p class="notice" id="night-fellow-traitors"></p>
       <div id="night-victim-list" style="text-align:left;"></div>
       <div class="divider"></div>
       <div class="chat-log" id="chat-log" style="max-height: 180px;"></div>
@@ -156,7 +167,7 @@
 </div>
 
 <!-- ============ Overlay: banishment picker ============ -->
-<div class="overlay hidden" id="overlay-banishment">
+<div class="overlay overlay-center hidden" id="overlay-banishment">
   <div class="sheet">
     <div class="sheet-header">
       <h2>Who was banished?</h2>
@@ -168,7 +179,7 @@
 </div>
 
 <!-- ============ Overlay: active players ============ -->
-<div class="overlay hidden" id="overlay-active">
+<div class="overlay overlay-center hidden" id="overlay-active">
   <div class="sheet">
     <div class="sheet-header">
       <h2>Active players</h2>
@@ -179,7 +190,7 @@
 </div>
 
 <!-- ============ Overlay: eliminated players ============ -->
-<div class="overlay hidden" id="overlay-eliminated">
+<div class="overlay overlay-center hidden" id="overlay-eliminated">
   <div class="sheet">
     <div class="sheet-header">
       <h2>Eliminated</h2>
@@ -188,6 +199,15 @@
     <ul class="list" id="eliminated-list"></ul>
     <p class="notice" id="eliminated-empty">Nobody yet.</p>
   </div>
+</div>
+
+<!-- ============ Full-screen: initial role reveal (start of round 1) ============ -->
+<div class="full-reveal hidden overlay-center" id="reveal-role">
+  <div class="icon" id="role-reveal-icon">🕊️</div>
+  <h1 id="role-reveal-heading">You are Faithful</h1>
+  <p id="role-reveal-sub">Trust carefully. You don't know who among you is a Traitor.</p>
+  <p class="notice hidden" id="role-reveal-fellows"></p>
+  <button class="btn btn-primary" id="btn-ack-role" style="max-width:240px;">I understand</button>
 </div>
 
 <!-- ============ Full-screen: private night reveal ============ -->

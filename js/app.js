@@ -4,7 +4,7 @@ import {
   getAuth, signInAnonymously, onAuthStateChanged
 } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
 import {
-  getFirestore, doc, getDoc, setDoc, updateDoc, onSnapshot,
+  getFirestore, doc, getDoc, getDocs, setDoc, updateDoc, onSnapshot,
   collection, addDoc, query, orderBy, serverTimestamp,
   runTransaction, Timestamp, deleteField
 } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js";
@@ -30,7 +30,9 @@ let nightActionCache = null;
 
 let hasHandledMurderPending = false;
 let hasHandledRecruitPrompt = false;
+let hasShownInitialRoleReveal = false;
 let recruitCountdownInterval = null;
+let pendingHostName = null; // name entered on the join screen, used once setup is submitted
 
 // ---------------------------------------------------------------
 // Small helpers
@@ -98,7 +100,7 @@ $("join-mode-toggle").addEventListener("click", (e) => {
   joinMode = btn.dataset.mode;
   document.querySelectorAll("#join-mode-toggle button").forEach(b => b.classList.toggle("active", b === btn));
   $("field-game-code").classList.toggle("hidden", joinMode === "create");
-  $("btn-join-submit").textContent = joinMode === "create" ? "Create the game" : "Enter the castle";
+  $("btn-join-submit").textContent = joinMode === "create" ? "Continue" : "Enter the castle";
 });
 
 $("btn-join-submit").addEventListener("click", async () => {
@@ -110,7 +112,9 @@ $("btn-join-submit").addEventListener("click", async () => {
 
   try {
     if (joinMode === "create") {
-      await createGame(name);
+      // Settings come first, before any code exists — see btn-create-game below.
+      pendingHostName = name;
+      showView("view-host-setup");
     } else {
       const code = $("input-code").value.trim().toUpperCase();
       if (!code) { $("join-error").textContent = "Enter the game code."; return; }
@@ -122,7 +126,45 @@ $("btn-join-submit").addEventListener("click", async () => {
   }
 });
 
-async function createGame(name) {
+// ---------------------------------------------------------------
+// Host setup screen — collects settings BEFORE a game/code exists
+// ---------------------------------------------------------------
+let noResponseDefault = "decline";
+$("toggle-noresponse").addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-val]");
+  if (!btn) return;
+  noResponseDefault = btn.dataset.val;
+  document.querySelectorAll("#toggle-noresponse button").forEach(b => b.classList.toggle("active", b === btn));
+});
+
+$("btn-create-game").addEventListener("click", async () => {
+  $("setup-error").textContent = "";
+  const numTraitors = parseInt($("set-numTraitors").value, 10);
+  const maxTraitors = parseInt($("set-maxTraitors").value, 10);
+  const investigationMins = parseInt($("set-investigationMins").value, 10);
+  const banishmentMins = parseInt($("set-banishmentMins").value, 10);
+  const nightMins = parseInt($("set-nightMins").value, 10);
+  const endgameThreshold = parseInt($("set-endgameThreshold").value, 10);
+
+  if (numTraitors < 1) { $("setup-error").textContent = "You need at least 1 starting traitor."; return; }
+  if (maxTraitors < numTraitors) { $("setup-error").textContent = "Max traitors can't be less than starting traitors."; return; }
+  if (endgameThreshold < 2) { $("setup-error").textContent = "Endgame threshold must be at least 2."; return; }
+  if (investigationMins < 1 || banishmentMins < 1 || nightMins < 1) {
+    $("setup-error").textContent = "Phase lengths must be at least 1 minute."; return;
+  }
+
+  try {
+    await createGame({
+      numTraitors, maxTraitors, investigationMins, banishmentMins,
+      nightMins, endgameThreshold, noResponseDefault
+    });
+  } catch (err) {
+    console.error(err);
+    $("setup-error").textContent = err.message || "Something went wrong. Try again.";
+  }
+});
+
+async function createGame(settings) {
   const code = randomCode();
   await setDoc(gameRef(code), {
     status: "lobby",
@@ -133,19 +175,11 @@ async function createGame(name) {
     activeFaithfulCount: 0,
     pendingRecruitment: null,
     nightResolved: false,
-    settings: {
-      numTraitors: 2,
-      maxTraitors: 3,
-      investigationMins: 30,
-      banishmentMins: 10,
-      nightMins: 10,
-      endgameThreshold: 4,
-      noResponseDefault: "decline"
-    },
+    settings,
     createdAt: serverTimestamp()
   });
   await setDoc(playerRef(code, myUid), {
-    name, alive: true, eliminatedInfo: null, joinedAt: serverTimestamp()
+    name: pendingHostName, alive: true, eliminatedInfo: null, joinedAt: serverTimestamp()
   });
   enterGame(code, true);
 }
@@ -230,6 +264,7 @@ function render() {
 
   showView("view-home");
   renderHomeHeader();
+  renderPlayerLists(); // re-run on every game-state change, not just player-doc changes
 
   const panels = [
     "phase-body-investigation", "phase-body-banishment",
@@ -250,6 +285,11 @@ function render() {
         ? "You're the last Traitor. You must recruit a new partner tonight — tap a name below."
         : "Agree with your fellow traitors, then tap a name below. You can change your mind until the phase ends.";
       renderNightVictimList();
+      getFellowTraitorNames().then(names => {
+        $("night-fellow-traitors").textContent = lone
+          ? "You're on your own tonight — recruit wisely."
+          : (names.length ? `Fellow traitors: ${names.join(", ")}` : "");
+      });
     } else {
       $("phase-body-night-faithful").classList.remove("hidden");
     }
@@ -278,7 +318,7 @@ function renderLobby() {
     `<li><span class="name">${escapeHtml(p.name)}</span>${uid === gameData.hostUid ? '<span class="tag">Host</span>' : ""}</li>`
   ).join("");
 
-  $("lobby-host-settings").classList.toggle("hidden", !isHost);
+  $("lobby-host-start").classList.toggle("hidden", !isHost);
   $("lobby-waiting-notice").classList.toggle("hidden", isHost);
 }
 
@@ -339,41 +379,43 @@ function renderChat(msgs) {
   log.scrollTop = log.scrollHeight;
 }
 
+// A traitor's client is allowed (by the security rules) to read every
+// player's role, since it doesn't depend on which document is being read —
+// only on the requester already being a traitor. Faithfuls never call this.
+async function getFellowTraitorNames() {
+  try {
+    const snap = await getDocs(rolesCol(gameCode));
+    const names = [];
+    snap.forEach(d => {
+      if (d.id !== myUid && d.data().role === "traitor") {
+        names.push(playersCache[d.id]?.name || "Unknown");
+      }
+    });
+    return names;
+  } catch (err) {
+    console.error("Could not load fellow traitors", err);
+    return [];
+  }
+}
+
 function escapeHtml(s) {
   return String(s || "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
 // ---------------------------------------------------------------
-// Lobby: host settings + start
+// Waiting room: host starts the game once everyone's joined
 // ---------------------------------------------------------------
-let noResponseDefault = "decline";
-$("toggle-noresponse").addEventListener("click", (e) => {
-  const btn = e.target.closest("button[data-val]");
-  if (!btn) return;
-  noResponseDefault = btn.dataset.val;
-  document.querySelectorAll("#toggle-noresponse button").forEach(b => b.classList.toggle("active", b === btn));
-});
-
 $("btn-start-game").addEventListener("click", async () => {
   $("lobby-error").textContent = "";
-  const numTraitors = parseInt($("set-numTraitors").value, 10);
-  const maxTraitors = parseInt($("set-maxTraitors").value, 10);
-  const investigationMins = parseInt($("set-investigationMins").value, 10);
-  const banishmentMins = parseInt($("set-banishmentMins").value, 10);
-  const nightMins = parseInt($("set-nightMins").value, 10);
-  const endgameThreshold = parseInt($("set-endgameThreshold").value, 10);
+  const { numTraitors, endgameThreshold, investigationMins } = gameData.settings;
 
   const playerUids = Object.keys(playersCache);
   if (playerUids.length < endgameThreshold + 1) {
     $("lobby-error").textContent = `You need more players than the endgame threshold (${endgameThreshold}).`;
     return;
   }
-  if (numTraitors < 1 || numTraitors >= playerUids.length) {
-    $("lobby-error").textContent = "Traitor count must be at least 1 and less than the number of players.";
-    return;
-  }
-  if (maxTraitors < numTraitors) {
-    $("lobby-error").textContent = "Max traitors can't be less than the starting number of traitors.";
+  if (numTraitors >= playerUids.length) {
+    $("lobby-error").textContent = "Traitor count must be less than the number of players who've joined.";
     return;
   }
 
@@ -391,11 +433,7 @@ $("btn-start-game").addEventListener("click", async () => {
     activeTraitorCount: numTraitors,
     activeFaithfulCount: playerUids.length - numTraitors,
     pendingRecruitment: null,
-    nightResolved: false,
-    settings: {
-      numTraitors, maxTraitors, investigationMins, banishmentMins,
-      nightMins, endgameThreshold, noResponseDefault
-    }
+    nightResolved: false
   });
 });
 
@@ -703,6 +741,42 @@ $("close-eliminated").addEventListener("click", () => closeOverlay("overlay-elim
 $("btn-ack-safe").addEventListener("click", () => $("reveal-safe").classList.add("hidden"));
 
 // ---------------------------------------------------------------
+// Initial role reveal — the moment a player first learns their role,
+// right as round 1 begins. Traitors also get told who their fellow
+// traitors are, since they'd otherwise have no way to know.
+// ---------------------------------------------------------------
+function maybeShowInitialRoleReveal() {
+  if (hasShownInitialRoleReveal) return;
+  if (!gameData || gameData.status === "lobby") return;
+  if (!myRoleData) return; // role not loaded yet
+
+  hasShownInitialRoleReveal = true;
+
+  if (myRoleData.role === "traitor") {
+    $("role-reveal-icon").textContent = "🗡️";
+    $("role-reveal-heading").textContent = "You are a Traitor";
+    $("role-reveal-sub").textContent = "Murder by night, blend in by day. Keep it secret.";
+    $("role-reveal-fellows").classList.remove("hidden");
+    $("role-reveal-fellows").textContent = "Loading your fellow traitors…";
+    getFellowTraitorNames().then(names => {
+      $("role-reveal-fellows").textContent = names.length
+        ? `Your fellow traitors: ${names.join(", ")}`
+        : "You're the only Traitor — for now.";
+    });
+  } else {
+    $("role-reveal-icon").textContent = "🕊️";
+    $("role-reveal-heading").textContent = "You are Faithful";
+    $("role-reveal-sub").textContent = "Trust carefully. You don't know who among you is a Traitor.";
+    $("role-reveal-fellows").classList.add("hidden");
+    $("role-reveal-fellows").textContent = "";
+  }
+
+  $("reveal-role").classList.remove("hidden");
+}
+
+$("btn-ack-role").addEventListener("click", () => $("reveal-role").classList.add("hidden"));
+
+// ---------------------------------------------------------------
 // Private "safe" reveal at the moment night ends, for survivors
 // ---------------------------------------------------------------
 let lastAnnouncedStatus = null;
@@ -721,6 +795,7 @@ render = function () {
   _originalRender();
   watchForSafeReveal();
   checkRecruitmentPrompt();
+  maybeShowInitialRoleReveal();
 };
 
 // ---------------------------------------------------------------
