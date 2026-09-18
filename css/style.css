@@ -412,8 +412,20 @@ input {
   padding: 30px;
   gap: 16px;
 }
-.full-reveal.reveal-safe { background: #14100d; }
-.full-reveal.reveal-murdered { background: #200c0e; }
+.full-reveal.reveal-safe,
+#reveal-safe {
+  background: #14100d;
+}
+.full-reveal.reveal-murdered,
+#reveal-murdered {
+  background: #200c0e;
+}
+#reveal-role {
+  background: #14100d;
+}
+#reveal-recruit {
+  background: rgba(10, 8, 6, 0.97);
+}
 .full-reveal .icon { font-size: 56px; }
 .full-reveal h1 { font-size: 26px; }
 
