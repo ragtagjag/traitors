@@ -30,7 +30,6 @@ let nightActionCache = null;
 
 let hasHandledMurderPending = false;
 let hasHandledRecruitPrompt = false;
-let hasShownInitialRoleReveal = false;
 let recruitCountdownInterval = null;
 let pendingHostName = null; // name entered on the join screen, used once setup is submitted
 
@@ -242,11 +241,21 @@ function attachListeners(code) {
 let chatUnsub = null;
 function maybeSubscribeChat() {
   if (myRoleData?.role === "traitor" && !chatUnsub) {
-    chatUnsub = onSnapshot(query(chatCol(gameCode), orderBy("createdAt", "asc")), (snap) => {
-      const msgs = [];
-      snap.forEach(d => msgs.push(d.data()));
-      renderChat(msgs);
-    });
+    chatUnsub = onSnapshot(
+      query(chatCol(gameCode), orderBy("createdAt", "asc")),
+      (snap) => {
+        const msgs = [];
+        snap.forEach(d => msgs.push(d.data()));
+        renderChat(msgs);
+      },
+      (err) => {
+        // Most likely cause: this client's playerRoles doc doesn't (yet, or
+        // no longer) say role === "traitor" from the server's point of
+        // view, so the security rules reject the read — e.g. stale local
+        // state, or this really is a Faithful's browser.
+        console.error("Traitor chat subscription failed:", err.code, err.message);
+      }
+    );
   }
 }
 
@@ -285,7 +294,9 @@ function render() {
         ? "You're the last Traitor. You must recruit a new partner tonight — tap a name below."
         : "Agree with your fellow traitors, then tap a name below. You can change your mind until the phase ends.";
       renderNightVictimList();
-      getFellowTraitorNames().then(names => {
+      refreshTraitorUidSet().then(() => {
+        renderNightVictimList(); // re-render with the accurate traitor set once it's loaded
+        const names = getFellowTraitorNames();
         $("night-fellow-traitors").textContent = lone
           ? "You're on your own tonight — recruit wisely."
           : (names.length ? `Fellow traitors: ${names.join(", ")}` : "");
@@ -353,7 +364,8 @@ function renderNightVictimList() {
 
   const candidates = Object.entries(playersCache).filter(([uid, p]) => {
     if (!p.alive) return false;
-    if (lone) return true; // recruit target can be any alive player who isn't already known-traitor to us... we can't tell from public data, but self-selecting a fellow traitor is harmless (handled fine, they'd just decline oddly) — filter using role cache isn't available for others, acceptable edge case.
+    if (uid === myUid) return false; // never target yourself
+    if (knownTraitorUids.has(uid)) return false; // murder and recruit both only target Faithfuls
     return true;
   });
 
@@ -382,20 +394,26 @@ function renderChat(msgs) {
 // A traitor's client is allowed (by the security rules) to read every
 // player's role, since it doesn't depend on which document is being read —
 // only on the requester already being a traitor. Faithfuls never call this.
-async function getFellowTraitorNames() {
+// Cached per night-phase/reveal entry and reused by both the victim/recruit
+// picker (to exclude traitors) and the "fellow traitors" displays.
+let knownTraitorUids = new Set();
+
+async function refreshTraitorUidSet() {
   try {
     const snap = await getDocs(rolesCol(gameCode));
-    const names = [];
-    snap.forEach(d => {
-      if (d.id !== myUid && d.data().role === "traitor") {
-        names.push(playersCache[d.id]?.name || "Unknown");
-      }
-    });
-    return names;
+    const s = new Set();
+    snap.forEach(d => { if (d.data().role === "traitor") s.add(d.id); });
+    knownTraitorUids = s;
   } catch (err) {
-    console.error("Could not load fellow traitors", err);
-    return [];
+    console.error("Could not load traitor roster", err);
   }
+  return knownTraitorUids;
+}
+
+function getFellowTraitorNames() {
+  return [...knownTraitorUids]
+    .filter(uid => uid !== myUid)
+    .map(uid => playersCache[uid]?.name || "Unknown");
 }
 
 function escapeHtml(s) {
@@ -533,12 +551,17 @@ $("chat-form").addEventListener("submit", async (e) => {
   const text = input.value.trim();
   if (!text) return;
   input.value = "";
-  await addDoc(chatCol(gameCode), {
-    senderUid: myUid,
-    senderName: myPlayerData?.name || "Traitor",
-    text,
-    createdAt: serverTimestamp()
-  });
+  try {
+    await addDoc(chatCol(gameCode), {
+      senderUid: myUid,
+      senderName: myPlayerData?.name || "Traitor",
+      text,
+      createdAt: serverTimestamp()
+    });
+  } catch (err) {
+    console.error("Sending chat message failed:", err.code, err.message);
+    input.value = text; // give it back so it isn't silently lost
+  }
 });
 
 // ---------------------------------------------------------------
@@ -749,6 +772,7 @@ $("btn-ack-safe").addEventListener("click", () => $("reveal-safe").classList.add
 $("btn-new-game").addEventListener("click", () => {
   // Full reload is the simplest reliable way to clear all in-memory state
   // and every one-time-reveal flag, not just the stored game code.
+  if (gameCode) localStorage.removeItem(`traitors_role_seen_${gameCode}`);
   localStorage.removeItem("traitors_last_code");
   location.reload();
 });
@@ -759,11 +783,15 @@ $("btn-new-game").addEventListener("click", () => {
 // traitors are, since they'd otherwise have no way to know.
 // ---------------------------------------------------------------
 function maybeShowInitialRoleReveal() {
-  if (hasShownInitialRoleReveal) return;
   if (!gameData || gameData.status === "lobby") return;
   if (!myRoleData) return; // role not loaded yet
+  if (myPlayerData && myPlayerData.alive === false) return; // already out — don't resurface this on reconnect
 
-  hasShownInitialRoleReveal = true;
+  // Persisted (not just an in-memory flag) so a page refresh mid-game
+  // can't cause this to fire a second time on top of other screens.
+  const seenKey = `traitors_role_seen_${gameCode}`;
+  if (localStorage.getItem(seenKey)) return;
+  localStorage.setItem(seenKey, "1");
 
   if (myRoleData.role === "traitor") {
     $("role-reveal-icon").textContent = "🗡️";
@@ -771,7 +799,8 @@ function maybeShowInitialRoleReveal() {
     $("role-reveal-sub").textContent = "Murder by night, blend in by day. Keep it secret.";
     $("role-reveal-fellows").classList.remove("hidden");
     $("role-reveal-fellows").textContent = "Loading your fellow traitors…";
-    getFellowTraitorNames().then(names => {
+    refreshTraitorUidSet().then(() => {
+      const names = getFellowTraitorNames();
       $("role-reveal-fellows").textContent = names.length
         ? `Your fellow traitors: ${names.join(", ")}`
         : "You're the only Traitor — for now.";
